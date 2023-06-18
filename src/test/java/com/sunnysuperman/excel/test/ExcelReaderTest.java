@@ -1,0 +1,212 @@
+package com.sunnysuperman.excel.test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.streaming.SXSSFSheet;
+import org.apache.poi.xssf.streaming.SXSSFWorkbook;
+import org.junit.jupiter.api.Test;
+
+import com.sunnysuperman.commons.util.FileUtil;
+import com.sunnysuperman.commons.util.FormatUtil;
+import com.sunnysuperman.excel.ExcelUtils;
+import com.sunnysuperman.excel.reader.BatchHandler;
+import com.sunnysuperman.excel.reader.DataAndRowIndex;
+import com.sunnysuperman.excel.reader.ExcelColumn;
+import com.sunnysuperman.excel.reader.ExcelReader;
+import com.sunnysuperman.excel.reader.HandlerException;
+
+class ExcelReaderTest {
+
+	@Test
+	void read() throws Exception {
+		File file = makeSrcExcelFile(1000);
+		AtomicInteger times = new AtomicInteger();
+		AtomicInteger totalRecordsNum = new AtomicInteger();
+
+		new ExcelReader(file).setStreaming(true).setStreamingRowCacheSize(100)
+				.setColumns(new ExcelColumn[] { new ExcelColumn("phone", "手机号") })
+				.setHandler(new BatchHandler<DataAndRowIndex<String>>(300) {
+
+					@Override
+					protected DataAndRowIndex<String> parseData(ExcelReader reader, Map<String, Object> data,
+							int rowIndex) throws HandlerException {
+						return new DataAndRowIndex<>(data.get("phone").toString(), rowIndex);
+					}
+
+					@Override
+					protected void handleBatch(ExcelReader reader, List<DataAndRowIndex<String>> dataList)
+							throws HandlerException {
+						if (times.incrementAndGet() <= 3) {
+							assertEquals(300, dataList.size());
+						} else {
+							assertEquals(100, dataList.size());
+						}
+						totalRecordsNum.addAndGet(dataList.size());
+					}
+
+				}).read();
+
+		assertEquals(4, times.get());
+		assertEquals(1000, totalRecordsNum.get());
+	}
+
+	@Test
+	void readAndCopy() throws Exception {
+		File file = makeSrcExcelFile(1000);
+
+		int readRowCacheSize = 100;
+		int writeRowCacheSize = 200;
+		File feedbackFile = newFile("feedback");
+		Workbook feedbackWorkbook = ExcelUtils.newWorkbook(writeRowCacheSize);
+		Sheet feedbackSheet = ExcelUtils.ensureSheet(feedbackWorkbook, 0);
+
+		new ExcelReader(file).setStreaming(true).setStreamingRowCacheSize(readRowCacheSize)
+				.setColumns(new ExcelColumn[] { new ExcelColumn("phone", "手机号") }).setCopySheet(feedbackSheet)
+				.setHandler(new BatchHandler<DataAndRowIndex<String>>(writeRowCacheSize) {
+
+					@Override
+					public void onRowCopied(ExcelReader reader, Row row, Row copyRow, boolean isHeader)
+							throws HandlerException {
+						if (isHeader) {
+							copyRow.createCell(1).setCellValue("校验结果");
+							copyRow.createCell(2).setCellValue("原因");
+						}
+					}
+
+					@Override
+					protected DataAndRowIndex<String> parseData(ExcelReader reader, Map<String, Object> data,
+							int rowIndex) throws HandlerException {
+						String phone = FormatUtil.parseString(data.get("phone"));
+						boolean valid = phone != null && phone.length() == 11;
+						return new DataAndRowIndex<>(valid ? phone : null, rowIndex);
+					}
+
+					@Override
+					protected void handleBatch(ExcelReader reader, List<DataAndRowIndex<String>> dataList)
+							throws HandlerException {
+						for (DataAndRowIndex<String> data : dataList) {
+							Row row = feedbackSheet.getRow(data.getRowIndex());
+							String phone = data.getData();
+							if (phone == null) {
+								row.createCell(1).setCellValue("失败");
+								row.createCell(2).setCellValue("手机号码格式错误");
+							} else {
+								row.createCell(1).setCellValue("成功");
+							}
+						}
+					}
+
+					@Override
+					protected void end(ExcelReader reader) throws HandlerException {
+						try {
+							ExcelUtils.writeToFile(feedbackWorkbook, feedbackFile);
+						} catch (IOException e) {
+							throw new HandlerException(e);
+						}
+					}
+
+				}).read();
+
+		assertTrue(feedbackFile.length() > 0);
+	}
+
+	@Test
+	void readAndCopy2() throws Exception {
+		File file = makeSrcExcelFile(1000);
+		File feedbackFile = newFile("feedback2");
+
+		int readRowCacheSize = 100;
+		int writeRowCacheSize = 200;
+		new ExcelReader(file).setStreaming(true).setStreamingRowCacheSize(readRowCacheSize)
+				.setColumns(new ExcelColumn[] { new ExcelColumn("phone", "手机号") })
+				.setCopyRowCacheSize(writeRowCacheSize)
+				.setHandler(new BatchHandler<DataAndRowIndex<String>>(writeRowCacheSize) {
+
+					@Override
+					public void onRowCopied(ExcelReader reader, Row row, Row copyRow, boolean isHeader)
+							throws HandlerException {
+						if (isHeader) {
+							copyRow.createCell(1).setCellValue("校验结果");
+							copyRow.createCell(2).setCellValue("原因");
+						}
+					}
+
+					@Override
+					protected DataAndRowIndex<String> parseData(ExcelReader reader, Map<String, Object> data,
+							int rowIndex) throws HandlerException {
+						String phone = FormatUtil.parseString(data.get("phone"));
+						boolean valid = phone != null && phone.length() == 11;
+						return new DataAndRowIndex<>(valid ? phone : null, rowIndex);
+					}
+
+					@Override
+					protected void handleBatch(ExcelReader reader, List<DataAndRowIndex<String>> dataList)
+							throws HandlerException {
+						for (DataAndRowIndex<String> data : dataList) {
+							Row row = reader.getCopySheet().getRow(data.getRowIndex());
+							String phone = data.getData();
+							if (phone == null) {
+								row.createCell(1).setCellValue("失败");
+								row.createCell(2).setCellValue("手机号码格式错误");
+							} else {
+								row.createCell(1).setCellValue("成功");
+							}
+						}
+					}
+
+					@Override
+					protected void end(ExcelReader reader) throws HandlerException {
+						try {
+							ExcelUtils.writeToFile(reader.getCopySheet().getWorkbook(), feedbackFile);
+						} catch (IOException e) {
+							throw new HandlerException(e);
+						}
+					}
+
+				}).read();
+
+		assertTrue(feedbackFile.length() > 0);
+	}
+
+	private File makeSrcExcelFile(int recordsNum) throws IOException {
+		SXSSFWorkbook wb = new SXSSFWorkbook(300);
+		SXSSFSheet sheet = wb.createSheet();
+		int rowIndex = -1;
+
+		Row titleRow = sheet.createRow(0);
+		titleRow.createCell(++rowIndex).setCellValue("手机号");
+
+		long start = 13800000000L;
+		for (int i = 0; i < recordsNum; i++) {
+			long phone = start + i;
+			if (i % 6 == 0) {
+				phone = phone * 10;
+			}
+			Row row = sheet.createRow(++rowIndex);
+			row.createCell(0).setCellValue(String.valueOf(phone));
+		}
+
+		File file = newFile("src");
+		ExcelUtils.writeToFile(wb, file);
+
+		return file;
+	}
+
+	private File newFile(String name) throws IOException {
+		File file = new File(new File(System.getProperty("user.dir")), "tmp/" + name + ".xlsx");
+		FileUtil.delete(file);
+		FileUtil.ensureFile(file);
+		return file;
+	}
+
+}
