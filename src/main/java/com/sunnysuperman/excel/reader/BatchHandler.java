@@ -20,6 +20,10 @@ public abstract class BatchHandler<T> implements Handler {
 		this(500);
 	}
 
+	public int getBatchNum() {
+		return batchNum;
+	}
+
 	@Override
 	public final boolean onData(ExcelReader reader, Map<String, Object> data, int rowIndex,
 			List<ExcelColumn> errorColumns) throws HandlerException {

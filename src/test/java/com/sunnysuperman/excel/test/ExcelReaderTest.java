@@ -18,11 +18,13 @@ import org.junit.jupiter.api.Test;
 
 import com.sunnysuperman.commons.util.FileUtil;
 import com.sunnysuperman.commons.util.FormatUtil;
+import com.sunnysuperman.excel.ExcelException;
 import com.sunnysuperman.excel.ExcelUtils;
 import com.sunnysuperman.excel.reader.BatchHandler;
 import com.sunnysuperman.excel.reader.DataAndRowIndex;
 import com.sunnysuperman.excel.reader.ExcelColumn;
 import com.sunnysuperman.excel.reader.ExcelReader;
+import com.sunnysuperman.excel.reader.ExcelReaderOptions;
 import com.sunnysuperman.excel.reader.HandlerException;
 
 class ExcelReaderTest {
@@ -33,7 +35,7 @@ class ExcelReaderTest {
 		AtomicInteger times = new AtomicInteger();
 		AtomicInteger totalRecordsNum = new AtomicInteger();
 
-		new ExcelReader(file).setStreaming(true).setStreamingRowCacheSize(100)
+		ExcelReaderOptions options = new ExcelReaderOptions().setStreaming(true)
 				.setColumns(new ExcelColumn[] { new ExcelColumn("phone", "手机号") })
 				.setHandler(new BatchHandler<DataAndRowIndex<String>>(300) {
 
@@ -54,7 +56,9 @@ class ExcelReaderTest {
 						totalRecordsNum.addAndGet(dataList.size());
 					}
 
-				}).read();
+				});
+
+		new ExcelReader(file, options).read();
 
 		assertEquals(4, times.get());
 		assertEquals(1000, totalRecordsNum.get());
@@ -70,8 +74,9 @@ class ExcelReaderTest {
 		Workbook feedbackWorkbook = ExcelUtils.newWorkbook(writeRowCacheSize);
 		Sheet feedbackSheet = ExcelUtils.ensureSheet(feedbackWorkbook, 0);
 
-		new ExcelReader(file).setStreaming(true).setStreamingRowCacheSize(readRowCacheSize)
-				.setColumns(new ExcelColumn[] { new ExcelColumn("phone", "手机号") }).setCopySheet(feedbackSheet)
+		ExcelReaderOptions options = new ExcelReaderOptions().setStreaming(true)
+				.setStreamingRowCacheSize(readRowCacheSize)
+				.setColumns(new ExcelColumn[] { new ExcelColumn("phone", "手机号") })
 				.setHandler(new BatchHandler<DataAndRowIndex<String>>(writeRowCacheSize) {
 
 					@Override
@@ -115,21 +120,21 @@ class ExcelReaderTest {
 						}
 					}
 
-				}).read();
+				});
+
+		new ExcelReader(file, options).setCopySheet(feedbackSheet).read();
 
 		assertTrue(feedbackFile.length() > 0);
 	}
 
 	@Test
 	void readAndCopy2() throws Exception {
-		File file = makeSrcExcelFile(1000);
+		File file = makeSrcExcelFile(10000);
 		File feedbackFile = newFile("feedback2");
-
-		int readRowCacheSize = 100;
 		int writeRowCacheSize = 200;
-		new ExcelReader(file).setStreaming(true).setStreamingRowCacheSize(readRowCacheSize)
-				.setColumns(new ExcelColumn[] { new ExcelColumn("phone", "手机号") })
-				.setCopyRowCacheSize(writeRowCacheSize)
+
+		ExcelReaderOptions options = new ExcelReaderOptions().setStreaming(true)
+				.setColumns(new ExcelColumn[] { new ExcelColumn("phone", "手机号") }).setCopy(true)
 				.setHandler(new BatchHandler<DataAndRowIndex<String>>(writeRowCacheSize) {
 
 					@Override
@@ -173,9 +178,98 @@ class ExcelReaderTest {
 						}
 					}
 
-				}).read();
+				});
+
+		new ExcelReader(file, options).read();
 
 		assertTrue(feedbackFile.length() > 0);
+		assertEquals(240, options.getCopyRowCacheSize());
+	}
+
+	@Test
+	void readBadExcel() throws Exception {
+		File file = makeSrcExcelFile(100);
+
+		ExcelReaderOptions options = new ExcelReaderOptions().setStreaming(true)
+				.setColumns(new ExcelColumn[] { new ExcelColumn("phone", "手机号2") }).setCopy(true)
+				.setHandler(new BatchHandler<DataAndRowIndex<String>>(100) {
+
+					@Override
+					public void onRowCopied(ExcelReader reader, Row row, Row copyRow, boolean isHeader)
+							throws HandlerException {
+						// nope
+					}
+
+					@Override
+					protected DataAndRowIndex<String> parseData(ExcelReader reader, Map<String, Object> data,
+							int rowIndex) throws HandlerException {
+						String phone = FormatUtil.parseString(data.get("phone"));
+						boolean valid = phone != null && phone.length() == 11;
+						return new DataAndRowIndex<>(valid ? phone : null, rowIndex);
+					}
+
+					@Override
+					protected void handleBatch(ExcelReader reader, List<DataAndRowIndex<String>> dataList)
+							throws HandlerException {
+						// nope
+					}
+
+					@Override
+					protected void end(ExcelReader reader) throws HandlerException {
+						// nope
+					}
+
+				});
+
+		try {
+			new ExcelReader(file, options).read();
+			assertTrue(false);
+		} catch (ExcelException e) {
+			assertTrue(e.getErrorCode() > 0);
+			System.out.println("不是符合模板的excel");
+		}
+	}
+
+	@Test
+	void handleError() throws Exception {
+		File file = makeSrcExcelFile(100);
+
+		ExcelReaderOptions options = new ExcelReaderOptions().setStreaming(true)
+				.setColumns(new ExcelColumn[] { new ExcelColumn("phone", "手机号") }).setCopy(true)
+				.setHandler(new BatchHandler<DataAndRowIndex<String>>(100) {
+
+					@Override
+					public void onRowCopied(ExcelReader reader, Row row, Row copyRow, boolean isHeader)
+							throws HandlerException {
+						// nope
+					}
+
+					@Override
+					protected DataAndRowIndex<String> parseData(ExcelReader reader, Map<String, Object> data,
+							int rowIndex) throws HandlerException {
+						throw new HandlerException("处理数据失败");
+					}
+
+					@Override
+					protected void handleBatch(ExcelReader reader, List<DataAndRowIndex<String>> dataList)
+							throws HandlerException {
+						// nope
+					}
+
+					@Override
+					protected void end(ExcelReader reader) throws HandlerException {
+						// nope
+					}
+
+				});
+
+		try {
+			new ExcelReader(file, options).read();
+			assertTrue(false);
+		} catch (HandlerException e) {
+			assertEquals("处理数据失败", e.getMessage());
+			System.out.println(e.getMessage());
+		}
 	}
 
 	private File makeSrcExcelFile(int recordsNum) throws IOException {
