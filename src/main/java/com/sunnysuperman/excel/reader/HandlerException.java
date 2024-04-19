@@ -1,5 +1,6 @@
 package com.sunnysuperman.excel.reader;
 
+@SuppressWarnings("serial")
 public class HandlerException extends Exception {
 
 	public HandlerException() {

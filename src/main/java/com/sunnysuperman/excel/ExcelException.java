@@ -1,5 +1,6 @@
 package com.sunnysuperman.excel;
 
+@SuppressWarnings("serial")
 public class ExcelException extends Exception {
 	public static final int ERROR_NOT_AN_EXCEL_FILE = 1;
 	public static final int ERROR_DATA_IS_EMPTY = 2;
